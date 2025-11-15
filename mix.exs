@@ -44,6 +44,8 @@ defmodule BeepRealTime.MixProject do
       {:bandit, "~> 1.5"},
       {:redix, "~> 1.2"},
       {:amqp, "~> 4.1"}
+      {:grpc, "~> 0.6"},
+      {:protobuf, "~> 0.12"}
     ]
   end
 

@@ -47,6 +47,7 @@ Telemetry:
 
 Configuration:
 - Redis URL via env var REDIS_URL (default: redis://localhost:6379/0). The service starts a Redix connection named BeepRealTime.Redis used by the deduper.
+- SFU gRPC address via env var SFU_GRPC_ADDR (default: 127.0.0.1:50051). The Voice channel sends Offer/Leave directly to the SFU Signaling gRPC service.
 
 Security and access:
 - Channel joins currently stub authorization; integrate token/user checks in `join/3` per channel and `UserSocket.connect/3`.
@@ -58,6 +59,29 @@ Future work:
 - Integrate with upstream queue(s) and add consumers when needed.
 - Authorization and access control on topic joins.
 - Presence and per-user rate limiting.
+- Additional SFU operations as the gRPC API evolves.
+
+## Voice Channel API (WebSocket)
+
+Join topic: `voice-channel:{id}`
+
+Push events:
+- `offer` with payload: `{"session_id": <number|string>, "endpoint_id": <number|string>, "offer_sdp": <string>}`
+  - Reply `ok`: `{"answer_sdp": <string>}`
+  - Reply `error`: `{"error": <string>}`
+- `leave` with payload: `{"session_id": <number|string>, "endpoint_id": <number|string>}`
+  - Reply `ok`: `{}`
+  - Reply `error`: `{"error": <string>}`
+
+Implementation details:
+- The service uses gRPC to call `signaling.Signaling/Offer` and `signaling.Signaling/Leave` at `SFU_GRPC_ADDR`.
+- Responses and errors are proxied back to the socket caller. Telemetry spans are emitted under `[:beep_real_time, :voice, ...]`.
+
+Troubleshooting (Voice/SFU):
+- If your React client sees `{error: "sfu_unreachable"}` or a transport error when calling `channel.push("offer", ...)`, it means the SFU gRPC service is not reachable from this app.
+  - Ensure the SFU is running and listening at `SFU_GRPC_ADDR` (default `127.0.0.1:50051`).
+  - If the app runs inside Docker but your SFU runs on the host, consider using `SFU_GRPC_ADDR=host.docker.internal:50051` on Docker Desktop, or the Linux host-gateway option.
+  - Socket replies return a compact error code (e.g., `sfu_unreachable`) to simplify client handling.
 
 
 ## Docker Compose (quick start)
@@ -73,6 +97,7 @@ After startup:
 
 Environment wired in compose:
 - REDIS_URL=redis://redis:6379/0
+- SFU_GRPC_ADDR=127.0.0.1:50051
 
 Notes:
 - The app binds to 0.0.0.0 in dev inside the container so you can access it from the host.
