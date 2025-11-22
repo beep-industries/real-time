@@ -29,3 +29,6 @@ erl_crash.dump
 
 # Ignore package tarball (built via "mix hex.build").
 beep_real_time-*.tar
+
+# Snyk Security Extension - AI Rules (auto-generated)
+.cursor/rules/snyk_rules.mdc
