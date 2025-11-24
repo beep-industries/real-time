@@ -19,6 +19,8 @@ defmodule BeepRealTime.Application do
       {Redix, {redis_url, [name: BeepRealTime.Redis]}},
       # Real-time signaling deduper (idempotency)
       BeepRealTime.Signaling.Deduper,
+      # RabbitMQ notification consumer
+      BeepRealTime.Queue.Consumer,
       # Start to serve requests, typically the last entry
       BeepRealTimeWeb.Endpoint
     ]
