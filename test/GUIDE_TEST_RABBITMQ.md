@@ -56,7 +56,7 @@ docker ps | grep rabbitmq
 ```
 
 3. Cliquer sur **"Publish message"**
-4. Le message devrait disparaître rapidement (consommé par ton application)
+4. Le message devrait disparaître rapidement
 
 ## 3. Tester depuis IEx (Recommandé)
 
@@ -74,6 +74,7 @@ BeepRealTime.Queue.Consumer.status()
 ```
 
 ### Publier un message de test
+
 
 ```elixir
 # Ouvrir une connexion RabbitMQ
