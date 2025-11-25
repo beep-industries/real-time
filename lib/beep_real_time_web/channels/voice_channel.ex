@@ -5,17 +5,21 @@ defmodule BeepRealTimeWeb.VoiceChannel do
 
   # A user connects to be in the call; joining triggers call-connection mechanisms.
   @impl true
-  def join("voice-channel:" <> _id, %{"username" => username} = _params, socket) do
+  def join("voice-channel:" <> uuid, %{"username" => username} = _params, socket) do
+    # Derive a shared u64 session_id from the channel key (UUIDv4)
+    session_id = uuid_to_u64(uuid)
+
     # Assign a unique u64 endpoint_id for this socket within the current channel topic
     endpoint_id = generate_unique_endpoint_id(socket)
 
     socket =
       socket
       |> assign(:username, username)
+      |> assign(:session_id, session_id)
       |> assign(:endpoint_id, endpoint_id)
 
-    # Return the assigned endpoint_id so the client can use it for any client-side needs
-    {:ok, %{endpoint_id: endpoint_id}, socket}
+    # Return the assigned ids so the client can use them as needed
+    {:ok, %{session_id: session_id, endpoint_id: endpoint_id}, socket}
   end
 
   @impl true
@@ -24,8 +28,9 @@ defmodule BeepRealTimeWeb.VoiceChannel do
   end
 
   @impl true
-  def handle_in("offer", %{"session_id" => s, "offer_sdp" => offer} = _payload, socket) do
+  def handle_in("offer", %{"offer_sdp" => offer} = _payload, socket) do
     endpoint_id = socket.assigns.endpoint_id
+    session_id = socket.assigns.session_id
 
     # Track presence for this endpoint (id) on first offer
     {:ok, _ref} =
@@ -35,8 +40,7 @@ defmodule BeepRealTimeWeb.VoiceChannel do
         %{id: endpoint_id, username: socket.assigns.username, audio: false, video: false}
       )
     push(socket, "presence_state", BeepRealTimeWeb.Presence.list(socket))
-    with {session_id, ""} <- parse_int(s),
-         true <- is_binary(offer) do
+    with true <- is_binary(offer) do
       :telemetry.execute([:beep_real_time, :voice, :offer, :request], %{count: 1}, %{session_id: session_id, endpoint_id: endpoint_id})
       case Client.offer(session_id, endpoint_id, offer) do
         {:ok, answer_sdp} ->
@@ -53,9 +57,10 @@ defmodule BeepRealTimeWeb.VoiceChannel do
   end
 
   @impl true
-  def handle_in("leave", %{"session_id" => s}, socket) do
+  def handle_in("leave", _payload, socket) do
     endpoint_id = socket.assigns.endpoint_id
-    with {session_id, ""} <- parse_int(s) do
+    session_id = socket.assigns.session_id
+    with true <- is_integer(session_id) do
       :telemetry.execute([:beep_real_time, :voice, :leave, :request], %{count: 1}, %{session_id: session_id, endpoint_id: endpoint_id})
       case Client.leave(session_id, endpoint_id) do
         :ok ->
@@ -86,6 +91,25 @@ defmodule BeepRealTimeWeb.VoiceChannel do
   defp parse_int(v) when is_integer(v), do: {v, ""}
   defp parse_int(v) when is_binary(v), do: Integer.parse(v)
   defp parse_int(_), do: :error
+
+  # Deterministically map a UUIDv4 string to an unsigned 64-bit session id.
+  # This ensures all users joining the same voice-channel:{uuid} share the same session_id.
+  defp uuid_to_u64(uuid) when is_binary(uuid) do
+    # Normalize and try to decode the raw 16 bytes of the UUID.
+    hex = uuid |> String.downcase() |> String.replace("-", "")
+    case Base.decode16(hex, case: :lower) do
+      {:ok, <<_skip::binary-size(8), first8::binary-size(8)>>} ->
+        :binary.decode_unsigned(first8)
+
+      {:ok, <<first8::binary-size(8), _rest::binary-size(8)>>} ->
+        :binary.decode_unsigned(first8)
+
+      _ ->
+        # Fallback: hash the uuid string to 64 bits
+        <<u64::unsigned-64, _::binary>> = :crypto.hash(:sha256, uuid)
+        u64
+    end
+  end
 
   # Generate a random u64 and ensure it does not collide with existing endpoint ids on this topic.
   defp generate_unique_endpoint_id(socket) do

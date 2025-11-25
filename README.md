@@ -63,18 +63,24 @@ Future work:
 
 ## Voice Channel API (WebSocket)
 
-Join topic: `voice-channel:{id}`
+Join topic: `voice-channel:{uuid}`
+
+Join response (payload from server):
+- `{ "session_id": <uint64>, "endpoint_id": <uint64> }`
+  - `session_id` is a shared unsigned 64-bit identifier derived deterministically from the topic UUID. All users joining the same `voice-channel:{uuid}` share this `session_id`.
+  - `endpoint_id` is a per-socket unsigned 64-bit identifier unique within the topic.
 
 Push events:
-- `offer` with payload: `{"session_id": <number|string>, "endpoint_id": <number|string>, "offer_sdp": <string>}`
+- `offer` with payload: `{"offer_sdp": <string>}`
   - Reply `ok`: `{"answer_sdp": <string>}`
   - Reply `error`: `{"error": <string>}`
-- `leave` with payload: `{"session_id": <number|string>, "endpoint_id": <number|string>}`
+- `leave` with payload: `{}`
   - Reply `ok`: `{}`
   - Reply `error`: `{"error": <string>}`
 
 Implementation details:
-- The service uses gRPC to call `signaling.Signaling/Offer` and `signaling.Signaling/Leave` at `SFU_GRPC_ADDR`.
+- The server derives `session_id` from the topic UUID by mapping it to a stable 64-bit unsigned integer. This ensures at-least-once/idempotent compatibility with downstream SFU systems expecting a numeric session id.
+- The service uses gRPC to call `signaling.Signaling/Offer` and `signaling.Signaling/Leave` at `SFU_GRPC_ADDR`, passing the derived `session_id` and the per-socket `endpoint_id`.
 - Responses and errors are proxied back to the socket caller. Telemetry spans are emitted under `[:beep_real_time, :voice, ...]`.
 
 Troubleshooting (Voice/SFU):
@@ -82,6 +88,42 @@ Troubleshooting (Voice/SFU):
   - Ensure the SFU is running and listening at `SFU_GRPC_ADDR` (default `127.0.0.1:50051`).
   - If the app runs inside Docker but your SFU runs on the host, consider using `SFU_GRPC_ADDR=host.docker.internal:50051` on Docker Desktop, or the Linux host-gateway option.
   - Socket replies return a compact error code (e.g., `sfu_unreachable`) to simplify client handling.
+
+
+  ### Collision analysis: UUIDv4 -> uint64 session_id
+
+  How we derive the numeric `session_id` today:
+  - We take the raw 16 bytes of the UUIDv4 and decode them.
+  - We use the last 8 bytes (bytes 9–16) and interpret them as an unsigned 64-bit integer.
+  - If the UUID cannot be parsed, we fall back to `sha256(uuid)` and take the first 8 bytes (64 bits).
+
+  Effective entropy:
+  - A UUIDv4 has 122 random bits (6 bits are reserved for version/variant).
+  - The last 8 bytes include the variant field, which fixes 2 of those 64 bits.
+  - Therefore, the derived `session_id` has ~62 bits of entropy when the input is a valid UUIDv4.
+  - In the fallback hashing path we have a full 64 bits of entropy (truncated SHA-256).
+
+  Collision probability (birthday bound approximation):
+  - For M distinct voice-channel UUIDs mapped to 62 random bits, the chance of at least one collision is approximately:
+    p ≈ 1 - exp(-M·(M-1) / (2 · 2^62)) ≈ M^2 / (2 · 2^62) for small p.
+  - Numeric intuition for 62-bit space (2^62 ≈ 4.61e18):
+    - M = 1,000 channels → p ≈ 1.1e-13 (negligible)
+    - M = 1,000,000 channels → p ≈ 1.1e-7 (0.000011%)
+    - M = 10,000,000 channels → p ≈ 1.1e-5 (0.0011%)
+    - M = 100,000,000 channels → p ≈ 1.1e-3 (0.11%)
+    - M = 1,000,000,000 channels → p ≈ 1.08e-1 (~10.8%)
+
+  Interpretation:
+  - If your total population of distinct voice channels is ≲ 10 million, the collision risk is around 1 in 100,000 or better, which is generally acceptable for non-adversarial IDs.
+  - At very large scales (hundreds of millions to billions of distinct channels), birthday collisions become non-negligible.
+
+  If you need to further reduce collision risk:
+  - Switch to hashing for all inputs: derive `session_id = first_8_bytes(sha256(uuid))` to get a uniform 64-bit spread (still uses 64-bit space, but avoids the 2 fixed variant bits and any structural bias). This improves distribution but does not change the fundamental birthday bound of 64-bit spaces.
+  - Or move to a wider numeric domain if your SFU supports it (e.g., 96/128-bit IDs). With 128 bits, collisions are effectively impossible in practice.
+
+  Operational mitigations:
+  - Log and alarm on SFU errors indicating duplicate/conflicting sessions, including `uuid`, `session_id`, and `endpoint_id` for investigation.
+  - Because `session_id` is deterministic from the topic UUID, any collision would mean two different UUIDs mapped to the same 64-bit number; you can hot-patch by switching to the hashing variant if that ever occurs.
 
 
 ## Docker Compose (quick start)
