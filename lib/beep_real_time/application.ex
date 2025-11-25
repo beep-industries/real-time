@@ -19,6 +19,8 @@ defmodule BeepRealTime.Application do
       {GRPC.Client.Supervisor, []},
       # Redis connection used by deduper and other components
       {Redix, {redis_url, [name: BeepRealTime.Redis]}},
+      # Start the Presence tracker
+      BeepRealTimeWeb.Presence,
       # Real-time signaling deduper (idempotency)
       BeepRealTime.Signaling.Deduper,
       # RabbitMQ notification consumer
