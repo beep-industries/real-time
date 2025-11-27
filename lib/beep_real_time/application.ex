@@ -15,8 +15,12 @@ defmodule BeepRealTime.Application do
       {Phoenix.PubSub, name: BeepRealTime.PubSub},
       # Start the Finch HTTP client for sending emails
       {Finch, name: BeepRealTime.Finch},
+      # gRPC client supervisor required by grpc library for client channels
+      {GRPC.Client.Supervisor, []},
       # Redis connection used by deduper and other components
       {Redix, {redis_url, [name: BeepRealTime.Redis]}},
+      # Start the Presence tracker
+      BeepRealTimeWeb.Presence,
       # Real-time signaling deduper (idempotency)
       BeepRealTime.Signaling.Deduper,
       # RabbitMQ notification consumer

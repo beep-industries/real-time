@@ -1,7 +1,7 @@
 # Simple development Dockerfile for BeepRealTime (Phoenix)
 # Multi-stage build to cache deps and build the app
 
-FROM elixir:1.14.5 AS base
+FROM elixir:1.19.2 AS base
 
 # Set up workdir
 WORKDIR /app
