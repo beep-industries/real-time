@@ -1,11 +1,14 @@
 defmodule BeepRealTimeWeb.VoiceChannel do
   use Phoenix.Channel
   alias BeepRealTime.SFU.Client
+  require Logger
   @max_endpoint_id 9_999_999_999_999
 
   # A user connects to be in the call; joining triggers call-connection mechanisms.
   @impl true
-  def join("voice-channel:" <> uuid, %{"username" => username} = _params, socket) do
+  def join("voice-channel:" <> uuid, _params, socket) do
+
+    user_id = socket.assigns[:user_id]
     # Derive a shared u64 session_id from the channel key (UUIDv4)
     session_id = uuid_to_u64(uuid)
 
@@ -14,12 +17,11 @@ defmodule BeepRealTimeWeb.VoiceChannel do
 
     socket =
       socket
-      |> assign(:username, username)
       |> assign(:session_id, session_id)
       |> assign(:endpoint_id, endpoint_id)
 
     # Return the assigned ids so the client can use them as needed
-    {:ok, %{session_id: session_id, endpoint_id: endpoint_id}, socket}
+    {:ok, %{session_id: session_id, endpoint_id: endpoint_id, user_id: user_id}, socket}
   end
 
   @impl true
@@ -36,8 +38,8 @@ defmodule BeepRealTimeWeb.VoiceChannel do
     {:ok, _ref} =
       BeepRealTimeWeb.Presence.track(
         socket,
-        socket.assigns.username,
-        %{id: endpoint_id, username: socket.assigns.username, audio: false, video: false}
+        socket.assigns.user_id,
+        %{id: endpoint_id, user_id: socket.assigns.user_id, audio: false, video: false}
       )
     push(socket, "presence_state", BeepRealTimeWeb.Presence.list(socket))
     with true <- is_binary(offer) do
@@ -81,8 +83,8 @@ defmodule BeepRealTimeWeb.VoiceChannel do
     {:ok, _ref} =
       BeepRealTimeWeb.Presence.update(
         socket,
-        socket.assigns.username,
-        %{id: socket.assigns.endpoint_id, username: socket.assigns.username, audio: audio, video: video}
+        socket.assigns.user_id,
+        %{id: socket.assigns.endpoint_id, user_id: socket.assigns.user_id, audio: audio, video: video}
       )
     push(socket, "presence_state", BeepRealTimeWeb.Presence.list(socket))
     {:noreply, socket}

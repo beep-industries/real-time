@@ -11,10 +11,6 @@ defmodule BeepRealTimeWeb.Endpoint do
     same_site: "Lax"
   ]
 
-  socket "/live", Phoenix.LiveView.Socket,
-    websocket: [connect_info: [session: @session_options]],
-    longpoll: [connect_info: [session: @session_options]]
-
   # Primary WebSocket for real-time signaling
   socket "/socket", BeepRealTimeWeb.UserSocket,
     websocket: [timeout: 60_000],

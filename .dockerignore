@@ -1,0 +1,47 @@
+# Git
+.git
+.gitignore
+
+# Mix artifacts
+/_build
+/deps
+*.ez
+
+# Elixir/Erlang artifacts
+erl_crash.dump
+*.beam
+/config/*.secret.exs
+.elixir_ls/
+
+# Test artifacts
+/cover
+/test/tmp
+
+# Documentation
+/doc
+
+# Development files
+.DS_Store
+.env
+.env.*
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Node
+node_modules
+npm-debug.log
+
+# Temporary files
+/tmp
+*.log
+
