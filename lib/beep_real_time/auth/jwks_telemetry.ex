@@ -43,3 +43,4 @@ defmodule BeepRealTime.Auth.JwksTelemetry do
     Logger.error("JWKS: Stacktrace: #{inspect(metadata.stacktrace)}")
   end
 end
+
