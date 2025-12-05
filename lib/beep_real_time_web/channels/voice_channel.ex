@@ -1,27 +1,34 @@
 defmodule BeepRealTimeWeb.VoiceChannel do
   use Phoenix.Channel
   alias BeepRealTime.SFU.Client
+  alias BeepRealTimeWeb.ChannelAuth
   require Logger
   @max_endpoint_id 9_999_999_999_999
 
   # A user connects to be in the call; joining triggers call-connection mechanisms.
   @impl true
   def join("voice-channel:" <> uuid, _params, socket) do
+    # Require user to be connected to UserChannel first
+    case ChannelAuth.require_user_channel(socket) do
+      :ok ->
+        user_id = socket.assigns[:user_id]
+        # Derive a shared u64 session_id from the channel key (UUIDv4)
+        session_id = uuid_to_u64(uuid)
 
-    user_id = socket.assigns[:user_id]
-    # Derive a shared u64 session_id from the channel key (UUIDv4)
-    session_id = uuid_to_u64(uuid)
+        # Assign a unique u64 endpoint_id for this socket within the current channel topic
+        endpoint_id = generate_unique_endpoint_id(socket)
 
-    # Assign a unique u64 endpoint_id for this socket within the current channel topic
-    endpoint_id = generate_unique_endpoint_id(socket)
+        socket =
+          socket
+          |> assign(:session_id, session_id)
+          |> assign(:endpoint_id, endpoint_id)
 
-    socket =
-      socket
-      |> assign(:session_id, session_id)
-      |> assign(:endpoint_id, endpoint_id)
+        # Return the assigned ids so the client can use them as needed
+        {:ok, %{session_id: session_id, endpoint_id: endpoint_id, user_id: user_id}, socket}
 
-    # Return the assigned ids so the client can use them as needed
-    {:ok, %{session_id: session_id, endpoint_id: endpoint_id, user_id: user_id}, socket}
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   @impl true

@@ -17,19 +17,20 @@ defmodule BeepRealTimeWeb.UserSocket do
         socket =
           socket
           |> assign(:user_id, claims["sub"])
+          |> assign(:token_exp, claims["exp"])
 
         {:ok, socket}
 
       {:error, _reason} ->
-        Logger.warn("Failed to verify token, reason: #{inspect(_reason)}")
-        :error
+        Logger.warning("Failed to verify token, reason: #{inspect(_reason)}")
+        {:error, %{reason: "invalid_token"}}
     end
   end
 
   @impl true
   def connect(_params, _socket, _connect_info) do
     # No token provided
-    :error
+    {:error, %{reason: "missing_token"}}
   end
 
   @impl true
