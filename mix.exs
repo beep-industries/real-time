@@ -9,7 +9,8 @@ defmodule BeepRealTime.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
-      deps: deps()
+      deps: deps(),
+      releases: releases()
     ]
   end
 
@@ -45,7 +46,10 @@ defmodule BeepRealTime.MixProject do
       {:redix, "~> 1.2"},
       {:amqp, "~> 4.1"},
       {:grpc, "~> 0.6"},
-      {:protobuf, "~> 0.12"}
+      {:protobuf, "~> 0.12"},
+      {:joken, "~> 2.6"},
+      {:joken_jwks, "~> 1.6"},
+      {:hackney, "~> 1.18"}
     ]
   end
 
@@ -58,6 +62,16 @@ defmodule BeepRealTime.MixProject do
   defp aliases do
     [
       setup: ["deps.get"]
+    ]
+  end
+
+  defp releases do
+    [
+      beep_real_time: [
+        include_executables_for: [:unix],
+        applications: [runtime_tools: :permanent],
+        steps: [:assemble, :tar]
+      ]
     ]
   end
 end

@@ -1,38 +1,57 @@
-# Simple development Dockerfile for BeepRealTime (Phoenix)
-# Multi-stage build to cache deps and build the app
+# Production Dockerfile for BeepRealTime (Phoenix)
+# Multi-stage build: builder -> runner
 
-FROM elixir:1.19.2 AS base
+FROM elixir:1.19.2 AS builder
 
 # Set up workdir
 WORKDIR /app
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    git \
-    curl \
-  && rm -rf /var/lib/apt/lists/*
+# Set build ENV
+ENV MIX_ENV=prod
 
-# Pre-install Hex/Rebar
-RUN mix local.hex --force && mix local.rebar --force
+# Install Hex and Rebar
+RUN mix local.hex --force && \
+    mix local.rebar --force
 
-# Copy mix files and fetch deps first (better layer caching)
-COPY mix.exs .
-COPY config ./config
+# Create app directory
+WORKDIR /app
 
-RUN mix deps.get --only prod || true \
- && mix deps.get
+# Copy mix files and lock
+COPY mix.exs mix.lock ./
 
-# Copy the rest of the source
-COPY . .
+# Copy config files
+COPY config config
+
+# Install and compile dependencies
+RUN mix deps.get --only prod && \
+    mix deps.compile
+
+# Copy application code
+COPY lib lib
+COPY priv priv
+
+# Compile the application
+RUN mix compile
+
+# Build the release
+RUN mix release
+
+# Stage 2: Create the runtime image
+FROM elixir:1.19.2 AS runner
+
+# Set working directory
+WORKDIR /app
+
+# Copy the release from builder
+COPY --from=builder --chown=app:app /app/_build/prod/rel/beep_real_time ./
 
 # Expose the Phoenix port
 EXPOSE 4000
 
-# Default environment for running the server in a container
-ENV MIX_ENV=dev \
+# Set environment variables
+ENV HOME=/app \
     PORT=4000 \
-    PHX_SERVER=true
+    MIX_ENV=prod
 
-# Start the Phoenix endpoint
-CMD ["bash", "-lc", "mix phx.server"]
+# Start the application using the release
+CMD ["/app/bin/beep_real_time", "start"]

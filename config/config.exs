@@ -10,6 +10,12 @@ import Config
 config :beep_real_time,
   generators: [timestamp_type: :utc_datetime]
 
+# OIDC Authentication Configuration
+# These should be overridden in runtime.exs with environment variables
+config :beep_real_time,
+  keycloak_url: System.get_env("KEYCLOAK_URL") || "http://localhost:8080",
+  keycloak_realm: System.get_env("KEYCLOAK_REALM") || "myrealm"
+
 # Configures the endpoint
 config :beep_real_time, BeepRealTimeWeb.Endpoint,
   url: [host: "localhost"],
@@ -37,6 +43,9 @@ config :logger, :console,
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
+
+# Configure Tesla to use Hackney adapter for HTTP requests (used by JokenJwks)
+config :tesla, adapter: Tesla.Adapter.Hackney
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.

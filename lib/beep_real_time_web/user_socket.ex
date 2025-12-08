@@ -1,5 +1,7 @@
 defmodule BeepRealTimeWeb.UserSocket do
   use Phoenix.Socket
+  alias BeepRealTime.Auth.KeycloakToken
+  require Logger
 
   # Channels mapping
   channel "text-channel:*", BeepRealTimeWeb.TextChannel
@@ -8,11 +10,29 @@ defmodule BeepRealTimeWeb.UserSocket do
   channel "server:*", BeepRealTimeWeb.ServerChannel
 
   @impl true
-  def connect(_params, socket, _connect_info) do
-    # TODO: Authorize connections based on params (tokens) and connect_info
-    {:ok, socket}
+  def connect(%{"token" => token}, socket, _connect_info) when is_binary(token) do
+    case KeycloakToken.verify_and_validate(token) do
+      {:ok, claims} ->
+        Logger.info("claims: #{inspect(claims)}, and sub: #{inspect(claims["sub"])}")
+        socket =
+          socket
+          |> assign(:user_id, claims["sub"])
+          |> assign(:token_exp, claims["exp"])
+
+        {:ok, socket}
+
+      {:error, _reason} ->
+        Logger.warning("Failed to verify token, reason: #{inspect(_reason)}")
+        {:error, %{reason: "invalid_token"}}
+    end
   end
 
   @impl true
-  def id(_socket), do: nil
+  def connect(_params, _socket, _connect_info) do
+    # No token provided
+    {:error, %{reason: "missing_token"}}
+  end
+
+  @impl true
+  def id(socket), do: "user_socket:#{socket.assigns.user_id}"
 end

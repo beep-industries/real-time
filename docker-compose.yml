@@ -7,10 +7,14 @@ services:
     ports:
       - "4000:4000"
     environment:
-      # Phoenix
-      - MIX_ENV=dev
+      # Phoenix (Production mode)
+      - MIX_ENV=prod
       - PORT=4000
-      - PHX_SERVER=true
+      - SECRET_KEY_BASE=${SECRET_KEY_BASE:-please_generate_a_secret_key_base_using_mix_phx_gen_secret}
+      - PHX_HOST=${PHX_HOST:-localhost}
+      # OIDC Configuration
+      - KEYCLOAK_URL=${KEYCLOAK_URL:-http://localhost:8080}
+      - KEYCLOAK_REALM=${KEYCLOAK_REALM:-myrealm}
       # Redis (for deduper)
       - REDIS_URL=redis://redis:6379/0
       # SFU gRPC address (set to where your SFU gRPC server is listening)

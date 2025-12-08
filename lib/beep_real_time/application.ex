@@ -9,6 +9,9 @@ defmodule BeepRealTime.Application do
   def start(_type, _args) do
     redis_url = System.get_env("REDIS_URL") || "redis://localhost:6379/0"
 
+    # Setup JWKS telemetry for debugging
+    BeepRealTime.Auth.JwksTelemetry.setup()
+
     children = [
       BeepRealTimeWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:beep_real_time, :dns_cluster_query) || :ignore},
@@ -19,6 +22,8 @@ defmodule BeepRealTime.Application do
       {GRPC.Client.Supervisor, []},
       # Redis connection used by deduper and other components
       {Redix, {redis_url, [name: BeepRealTime.Redis]}},
+      # JWKS strategy for OIDC token verification
+      BeepRealTime.Auth.JWKS,
       # Start the Presence tracker
       BeepRealTimeWeb.Presence,
       # Real-time signaling deduper (idempotency)

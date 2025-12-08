@@ -16,8 +16,16 @@ import Config
 #
 # Alternatively, you can use `mix phx.gen.release` to generate a `bin/server`
 # script that automatically sets the env var above.
-if System.get_env("PHX_SERVER") do
+if System.get_env("PHX_SERVER") || config_env() == :prod do
   config :beep_real_time, BeepRealTimeWeb.Endpoint, server: true
+end
+
+# OIDC Configuration - can be set in any environment
+if oidc_jwks_url = System.get_env("OIDC_JWKS_URL") do
+  config :beep_real_time,
+    oidc_jwks_url: oidc_jwks_url,
+    oidc_issuer: System.get_env("OIDC_ISSUER") || raise("OIDC_ISSUER must be set when OIDC_JWKS_URL is set"),
+    oidc_audience: System.get_env("OIDC_AUDIENCE") || raise("OIDC_AUDIENCE must be set when OIDC_JWKS_URL is set")
 end
 
 if config_env() == :prod do
