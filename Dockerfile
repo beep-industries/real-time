@@ -42,6 +42,9 @@ FROM elixir:1.19.2 AS runner
 # Set working directory
 WORKDIR /app
 
+# Create a non-root user to run the application
+RUN addgroup --system app && adduser --system --group app
+
 # Copy the release from builder
 COPY --from=builder --chown=app:app /app/_build/prod/rel/beep_real_time ./
 
