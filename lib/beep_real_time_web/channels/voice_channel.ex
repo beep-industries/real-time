@@ -12,8 +12,12 @@ defmodule BeepRealTimeWeb.VoiceChannel do
     case ChannelAuth.require_user_channel(socket) do
       :ok ->
         user_id = socket.assigns[:user_id]
+
+        disconnect_existing_voice_session(user_id)
+
         # Derive a shared u64 session_id from the channel key (UUIDv4)
         session_id = uuid_to_u64(uuid)
+        Logger.info("User #{user_id} joining voice channel #{uuid} with session_id #{session_id}")
 
         # Assign a unique u64 endpoint_id for this socket within the current channel topic
         endpoint_id = generate_unique_endpoint_id(socket)
@@ -23,12 +27,61 @@ defmodule BeepRealTimeWeb.VoiceChannel do
           |> assign(:session_id, session_id)
           |> assign(:endpoint_id, endpoint_id)
 
+        register_voice_session(user_id, self())
         # Return the assigned ids so the client can use them as needed
         {:ok, %{session_id: session_id, endpoint_id: endpoint_id, user_id: user_id}, socket}
 
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  @impl true
+  def terminate(_reason, socket) do
+    Logger.info("Terminating voice session for user #{socket.assigns.user_id}")
+    user_id = socket.assigns[:user_id]
+    if user_id, do: unregister_voice_session(user_id, self())
+
+    # Clean up SFU if needed
+    if socket.assigns[:session_id] && socket.assigns[:endpoint_id] do
+      Client.leave(socket.assigns.session_id, socket.assigns.endpoint_id)
+    end
+
+    :ok
+  end
+
+  # Handle forced disconnect from another join
+  @impl true
+  def handle_info(:force_disconnect, socket) do
+    Logger.info("Forcing disconnect of voice session for user #{socket.assigns.user_id}")
+    push(socket, "force_disconnect", %{reason: "joined_another_channel"})
+    {:stop, :normal, socket}
+  end
+
+  defp register_voice_session(user_id, pid) do
+    Logger.info("Registering voice session for user #{user_id}, and pid #{inspect(pid)}")
+    Registry.register(BeepRealTime.VoiceSessionRegistry, {:voice, user_id}, pid)
+  end
+
+  defp unregister_voice_session(user_id, pid) do
+    Logger.info("Unregistering voice session for user #{user_id} and pid #{inspect(pid)}")
+    Registry.unregister_match(BeepRealTime.VoiceSessionRegistry, {:voice, user_id}, pid)
+  end
+
+  defp disconnect_existing_voice_session(user_id) do
+    Logger.info("Disconnecting existing voice sessions for user #{user_id}")
+    Registry.lookup(BeepRealTime.VoiceSessionRegistry, {:voice, user_id})
+    |> Enum.each(fn {pid, _} ->
+      Logger.info("Sending force_disconnect to existing voice session pid #{inspect(pid)} for user #{user_id}")
+      if pid != self(), do: send(pid, :force_disconnect)
+    end)
+  end
+
+  @impl true
+  def handle_info(:gun_down, socket) do
+    Logger.warning("SFU connection lost for user #{socket.assigns.user_id}")
+    push(socket, "sfu_connection_lost", %{message: "Connection to SFU lost"})
+    {:noreply, socket}
   end
 
   @impl true
@@ -101,23 +154,13 @@ defmodule BeepRealTimeWeb.VoiceChannel do
   defp parse_int(v) when is_binary(v), do: Integer.parse(v)
   defp parse_int(_), do: :error
 
-  # Deterministically map a UUIDv4 string to an unsigned 64-bit session id.
+  # Deterministically map a UUIDv4 string to an unsigned integer with max 13 decimal digits.
   # This ensures all users joining the same voice-channel:{uuid} share the same session_id.
+  # The result is always <= 9_999_999_999_999 (13 digits max).
   defp uuid_to_u64(uuid) when is_binary(uuid) do
-    # Normalize and try to decode the raw 16 bytes of the UUID.
-    hex = uuid |> String.downcase() |> String.replace("-", "")
-    case Base.decode16(hex, case: :lower) do
-      {:ok, <<_skip::binary-size(8), first8::binary-size(8)>>} ->
-        :binary.decode_unsigned(first8)
-
-      {:ok, <<first8::binary-size(8), _rest::binary-size(8)>>} ->
-        :binary.decode_unsigned(first8)
-
-      _ ->
-        # Fallback: hash the uuid string to 64 bits
-        <<u64::unsigned-64, _::binary>> = :crypto.hash(:sha256, uuid)
-        u64
-    end
+    # Hash the UUID to get consistent bytes, then extract a 64-bit integer and bound it
+    <<u64::unsigned-64, _::binary>> = :crypto.hash(:sha256, uuid)
+    rem(u64, @max_endpoint_id + 1)
   end
 
   # Generate a random u64 and ensure it does not collide with existing endpoint ids on this topic.

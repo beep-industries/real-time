@@ -66,10 +66,17 @@ defmodule BeepRealTime.SFU.Client do
       {:error, :connect_error}
   end
 
-  defp format_grpc_error(%GRPC.RPCError{message: m}), do: m || "grpc_error"
+  defp format_grpc_error(%GRPC.RPCError{message: m}) do
+    Logger.error("SFU gRPC RPCError: #{inspect(m)}")
+    m || "grpc_error"
+  end
+
   defp format_grpc_error(%{message: m}) when is_binary(m), do: m
   defp format_grpc_error(:timeout), do: "timeout"
-  defp format_grpc_error(other), do: "grpc_error: #{inspect(other)}"
+  defp format_grpc_error(other) do
+    Logger.error("SFU gRPC unknown error: #{inspect(other)}")
+    "grpc_error: #{inspect(other)}"
+  end
 
   # Ensures the offer SDP is encoded as a JSON string with shape
   #   {"sdp": "...", "type": "offer"}

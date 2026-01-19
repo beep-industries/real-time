@@ -9,9 +9,6 @@ defmodule BeepRealTime.Application do
   def start(_type, _args) do
     redis_url = System.get_env("REDIS_URL") || "redis://localhost:6379/0"
 
-    # Setup JWKS telemetry for debugging
-    BeepRealTime.Auth.JwksTelemetry.setup()
-
     children = [
       BeepRealTimeWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:beep_real_time, :dns_cluster_query) || :ignore},
@@ -31,7 +28,8 @@ defmodule BeepRealTime.Application do
       # RabbitMQ notification consumer
       BeepRealTime.Queue.Consumer,
       # Start to serve requests, typically the last entry
-      BeepRealTimeWeb.Endpoint
+      BeepRealTimeWeb.Endpoint,
+      {Registry, keys: :duplicate, name: BeepRealTime.VoiceSessionRegistry}
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html

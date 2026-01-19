@@ -95,8 +95,8 @@ defmodule BeepRealTimeWeb.UserChannel do
   end
 
   @impl true
-  def terminate(_reason, socket) do
-    Logger.debug("UserChannel terminated for reason: #{inspect(_reason)}")
+  def terminate(reason, socket) do
+    Logger.debug("UserChannel terminated for reason: #{inspect(reason)}")
     send(socket.transport_pid, :close)
     :ok
   end

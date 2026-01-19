@@ -21,8 +21,8 @@ defmodule BeepRealTimeWeb.UserSocket do
 
         {:ok, socket}
 
-      {:error, _reason} ->
-        Logger.warning("Failed to verify token, reason: #{inspect(_reason)}")
+      {:error, reason} ->
+        Logger.warning("Failed to verify token, reason: #{inspect(reason)}")
         {:error, %{reason: "invalid_token"}}
     end
   end
