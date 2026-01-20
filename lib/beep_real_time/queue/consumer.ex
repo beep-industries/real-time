@@ -14,6 +14,7 @@ defmodule BeepRealTime.Queue.Consumer do
   require Logger
 
   alias BeepRealTime.Signaling.Dispatcher
+  alias BeepRealTime.Events.{MessageDecoder, MessageHandler}
 
   @default_queue "notification"
   @default_prefetch 32
@@ -126,16 +127,40 @@ defmodule BeepRealTime.Queue.Consumer do
 
   def handle_info({:basic_deliver, payload, meta}, %{channel: channel} = state)
       when not is_nil(channel) do
+    exchange = get_exchange(meta)
+
     result =
-      with {:ok, event} <- decode(payload),
-           :ok <- dispatch(event) do
+      with event_type <- get_event_type(meta),
+           {:ok, decoded_event} <- decode_protobuf(payload, event_type),
+           :ok <- handle_message_event(decoded_event, exchange) do
         ack(channel, meta.delivery_tag)
         :ok
       else
         {:error, reason} ->
-          Logger.error("Failed to process queue message", reason: inspect(reason))
-          reject(channel, meta.delivery_tag, reason)
-          {:error, reason}
+          Logger.error("Failed to process queue message",
+            reason: inspect(reason),
+            event_type: get_event_type(meta),
+            exchange: exchange,
+            queue: state.queue
+          )
+
+          # Try fallback to JSON dispatch for backward compatibility
+          case decode_json(payload) do
+            {:ok, json_event} ->
+              case dispatch(json_event) do
+                :ok ->
+                  ack(channel, meta.delivery_tag)
+                  :ok
+
+                {:error, _} ->
+                  reject(channel, meta.delivery_tag, reason)
+                  {:error, reason}
+              end
+
+            _ ->
+              reject(channel, meta.delivery_tag, reason)
+              {:error, reason}
+          end
       end
 
     if match?({:error, _}, result) do
@@ -226,7 +251,56 @@ defmodule BeepRealTime.Queue.Consumer do
     end
   end
 
-  defp decode(payload) when is_binary(payload) do
+  # Extract event type from RabbitMQ metadata (headers or routing_key)
+  defp get_event_type(meta) do
+    case meta.headers do
+      nil ->
+        parse_routing_key(meta.routing_key)
+
+      headers ->
+        case List.keyfind(headers, "event_type", 0) do
+          {"event_type", :longstr, event_type} -> event_type
+          {"event_type", :binary, event_type} -> event_type
+          _ -> parse_routing_key(meta.routing_key)
+        end
+    end
+  end
+
+  defp parse_routing_key(nil), do: nil
+
+  defp parse_routing_key(routing_key) when is_binary(routing_key) do
+    # Example: "events.messages.create" -> "messages.create"
+    # Or: "messages.create" -> "messages.create"
+    case String.split(routing_key, ".") do
+      ["events" | rest] -> Enum.join(rest, ".")
+      parts -> Enum.join(parts, ".")
+    end
+  end
+
+  defp parse_routing_key(_), do: nil
+
+  # Extract exchange from RabbitMQ metadata
+  defp get_exchange(meta) do
+    case Map.get(meta, :exchange) do
+      nil -> Map.get(meta, "exchange")
+      exchange -> exchange
+    end
+  end
+
+  # Decode Protobuf payload
+  defp decode_protobuf(payload, event_type) when is_binary(payload) and is_binary(event_type) do
+    MessageDecoder.decode(payload, event_type)
+  end
+
+  defp decode_protobuf(_payload, _event_type), do: {:error, :invalid_event_type}
+
+  # Handle message events via MessageHandler
+  defp handle_message_event(event, exchange) do
+    MessageHandler.handle(event, exchange)
+  end
+
+  # Fallback: decode JSON payload (for backward compatibility)
+  defp decode_json(payload) when is_binary(payload) do
     case Jason.decode(payload) do
       {:ok, map} when is_map(map) -> {:ok, map}
       {:ok, _other} -> {:error, :invalid_payload}
@@ -234,8 +308,8 @@ defmodule BeepRealTime.Queue.Consumer do
     end
   end
 
-  defp decode(payload) when is_map(payload), do: {:ok, payload}
-  defp decode(_), do: {:error, :invalid_payload}
+  defp decode_json(payload) when is_map(payload), do: {:ok, payload}
+  defp decode_json(_), do: {:error, :invalid_payload}
 
   defp dispatch(event) do
     case safe_dispatch(event) do
