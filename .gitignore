@@ -4,6 +4,7 @@
 .cursor
 .idea
 beep_real_time.iml
+.env
 
 
 # If you run "mix test --cover", coverage assets end up here.
