@@ -127,7 +127,15 @@ defmodule BeepRealTime.Queue.Consumer do
 
   def handle_info({:basic_deliver, payload, meta}, %{channel: channel} = state)
       when not is_nil(channel) do
-    exchange = get_exchange(meta)
+    try do
+      Logger.debug("Received message from queue",
+        queue: state.queue,
+        delivery_tag: meta.delivery_tag,
+        exchange: get_exchange(meta),
+        routing_key: meta.routing_key
+      )
+
+      exchange = get_exchange(meta)
 
     result =
       with event_type <- get_event_type(meta),
@@ -137,20 +145,37 @@ defmodule BeepRealTime.Queue.Consumer do
         :ok
       else
         {:error, reason} ->
-          Logger.error("Failed to process queue message",
-            reason: inspect(reason),
-            event_type: get_event_type(meta),
-            exchange: exchange,
-            queue: state.queue
-          )
+          Logger.error("""
+          Failed to process queue message
+          Reason: #{inspect(reason)}
+          Event type: #{inspect(get_event_type(meta))}
+          Exchange: #{inspect(exchange)}
+          Routing key: #{inspect(meta.routing_key)}
+          Headers: #{inspect(meta.headers)}
+          Payload preview: #{inspect(String.slice(payload, 0, 200))}
+          Queue: #{state.queue}
+          """)
 
           # Try fallback to JSON dispatch for backward compatibility
           case decode_json(payload) do
             {:ok, json_event} ->
-              case dispatch(json_event) do
+              # Try to handle as message event first
+              case handle_json_message_event(json_event, get_event_type(meta), exchange) do
                 :ok ->
                   ack(channel, meta.delivery_tag)
                   :ok
+
+                {:error, :not_message_event} ->
+                  # Fall back to generic dispatcher
+                  case dispatch(json_event) do
+                    :ok ->
+                      ack(channel, meta.delivery_tag)
+                      :ok
+
+                    {:error, _} ->
+                      reject(channel, meta.delivery_tag, reason)
+                      {:error, reason}
+                  end
 
                 {:error, _} ->
                   reject(channel, meta.delivery_tag, reason)
@@ -170,12 +195,30 @@ defmodule BeepRealTime.Queue.Consumer do
     end
 
     {:noreply, state}
+    catch
+      kind, error ->
+        stacktrace = __STACKTRACE__
+        Logger.error("""
+        Caught exception in message processing
+        Kind: #{inspect(kind)}
+        Error: #{inspect(error)}
+        Stacktrace: #{Exception.format_stacktrace(stacktrace)}
+        Queue: #{state.queue}
+        Delivery tag: #{meta.delivery_tag}
+        """)
+
+        reject(channel, meta.delivery_tag, {:caught, kind, error})
+        {:noreply, state}
+    end
   rescue
     exception ->
-      Logger.error("Unhandled exception while processing message",
-        exception: Exception.message(exception),
-        queue: state.queue
-      )
+      stacktrace = __STACKTRACE__
+      Logger.error("""
+      Unhandled exception while processing message
+      Exception: #{Exception.format(:error, exception, stacktrace)}
+      Exception type: #{inspect(exception)}
+      Queue: #{state.queue}
+      """)
 
       reject(channel, meta.delivery_tag, {:exception, exception})
       {:noreply, state}
@@ -220,12 +263,12 @@ defmodule BeepRealTime.Queue.Consumer do
     with {:ok, connection} <- Connection.open(state.url),
          {:ok, channel} <- Channel.open(connection),
          :ok <- Basic.qos(channel, prefetch_count: state.prefetch),
-         {:ok, _} <- Queue.declare(channel, state.queue, durable: true),
+         :ok <- setup_queue_and_bindings(channel, state.queue),
          {:ok, tag} <- consume(channel, state.queue) do
       conn_ref = Process.monitor(connection.pid)
       chan_ref = Process.monitor(channel.pid)
 
-      {:ok,
+      {:ok,﻿
        %{
          state
          | connection: connection,
@@ -251,18 +294,46 @@ defmodule BeepRealTime.Queue.Consumer do
     end
   end
 
+  # Set up queue, exchange, and bindings for message events
+  defp setup_queue_and_bindings(channel, queue) do
+    # Declare the queue
+    with {:ok, _} <- Queue.declare(channel, queue, durable: true),
+         # Declare the notifications exchange (topic type for routing flexibility)
+         :ok <- AMQP.Exchange.declare(channel, "notifications", :topic, durable: true),
+         # Declare the messages.events exchange (topic type)
+         :ok <- AMQP.Exchange.declare(channel, "messages.events", :topic, durable: true),
+         # Bind queue to notifications exchange (catch-all for notifications)
+         :ok <- Queue.bind(channel, queue, "notifications", routing_key: "#"),
+         # Bind queue to messages.events exchange (for message.created, message.updated, etc.)
+         :ok <- Queue.bind(channel, queue, "messages.events", routing_key: "messages.#") do
+      Logger.info("Queue #{queue} bound to exchanges: notifications, messages.events")
+      :ok
+    else
+      {:error, reason} ->
+        Logger.error("Failed to setup queue and bindings",
+          queue: queue,
+          reason: inspect(reason)
+        )
+
+        {:error, reason}
+    end
+  end
+
   # Extract event type from RabbitMQ metadata (headers or routing_key)
   defp get_event_type(meta) do
     case meta.headers do
-      nil ->
+      headers when headers in [nil, :undefined] ->
         parse_routing_key(meta.routing_key)
 
-      headers ->
+      headers when is_list(headers) ->
         case List.keyfind(headers, "event_type", 0) do
           {"event_type", :longstr, event_type} -> event_type
           {"event_type", :binary, event_type} -> event_type
           _ -> parse_routing_key(meta.routing_key)
         end
+
+      _ ->
+        parse_routing_key(meta.routing_key)
     end
   end
 
@@ -298,6 +369,65 @@ defmodule BeepRealTime.Queue.Consumer do
   defp handle_message_event(event, exchange) do
     MessageHandler.handle(event, exchange)
   end
+
+  # Handle JSON message events by converting to appropriate format
+  defp handle_json_message_event(json_event, event_type, exchange) when is_map(json_event) do
+    case event_type do
+      type when type in ["message.created", "messages.create"] ->
+        # Broadcast to channel topic
+        channel_id = json_event["channel_id"]
+
+        if channel_id do
+          payload = %{
+            event: "message.created",
+            data: json_event
+          }
+
+          Phoenix.PubSub.broadcast(BeepRealTime.PubSub, "text-channel:#{channel_id}", payload)
+          Logger.info("Broadcasted JSON message.created to text-channel:#{channel_id}")
+          :ok
+        else
+          {:error, :missing_channel_id}
+        end
+
+      type when type in ["message.updated", "messages.update"] ->
+        message_id = json_event["message_id"]
+
+        if message_id do
+          payload = %{
+            event: "message.updated",
+            data: json_event
+          }
+
+          Phoenix.PubSub.broadcast(BeepRealTime.PubSub, "message:#{message_id}", payload)
+          Logger.info("Broadcasted JSON message.updated to message:#{message_id}")
+          :ok
+        else
+          {:error, :missing_message_id}
+        end
+
+      type when type in ["message.deleted", "messages.delete"] ->
+        message_id = json_event["message_id"]
+
+        if message_id do
+          payload = %{
+            event: "message.deleted",
+            data: json_event
+          }
+
+          Phoenix.PubSub.broadcast(BeepRealTime.PubSub, "message:#{message_id}", payload)
+          Logger.info("Broadcasted JSON message.deleted to message:#{message_id}")
+          :ok
+        else
+          {:error, :missing_message_id}
+        end
+
+      _ ->
+        {:error, :not_message_event}
+    end
+  end
+
+  defp handle_json_message_event(_, _, _), do: {:error, :not_message_event}
 
   # Fallback: decode JSON payload (for backward compatibility)
   defp decode_json(payload) when is_binary(payload) do
