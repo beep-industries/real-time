@@ -268,7 +268,7 @@ defmodule BeepRealTime.Queue.Consumer do
       conn_ref = Process.monitor(connection.pid)
       chan_ref = Process.monitor(channel.pid)
 
-      {:ok,﻿
+      {:ok,
        %{
          state
          | connection: connection,
