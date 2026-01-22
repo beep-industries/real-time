@@ -137,9 +137,9 @@ defmodule BeepRealTime.Queue.Consumer do
 
       exchange = get_exchange(meta)
 
+    normalized_event_type = normalize_event_type(get_event_type(meta))
     result =
-      with event_type <- get_event_type(meta),
-           {:ok, decoded_event} <- decode_protobuf(payload, event_type),
+      with {:ok, decoded_event} <- decode_protobuf(payload, normalized_event_type),
            :ok <- handle_message_event(decoded_event, exchange) do
         ack(channel, meta.delivery_tag)
         :ok
@@ -149,24 +149,22 @@ defmodule BeepRealTime.Queue.Consumer do
           case decode_json(payload) do
             {:ok, json_event} ->
               # Try to handle as message event first
-              case handle_json_message_event(json_event, get_event_type(meta), exchange) do
+              case handle_json_message_event(json_event, normalized_event_type, exchange) do
                 :ok ->
                   ack(channel, meta.delivery_tag)
                   :ok
-
                 {:error, :not_message_event} ->
                   # Fall back to generic dispatcher
                   case dispatch(json_event) do
                     :ok ->
                       ack(channel, meta.delivery_tag)
                       :ok
-
                     {:error, _} ->
                       # Only log error if all handlers failed
                       Logger.error("""
                       Failed to process queue message
                       Reason: #{inspect(reason)}
-                      Event type: #{inspect(get_event_type(meta))}
+                      Event type: #{inspect(normalized_event_type)}
                       Exchange: #{inspect(exchange)}
                       Routing key: #{inspect(meta.routing_key)}
                       Headers: #{inspect(meta.headers)}
@@ -176,12 +174,11 @@ defmodule BeepRealTime.Queue.Consumer do
                       reject(channel, meta.delivery_tag, reason)
                       {:error, reason}
                   end
-
                 {:error, _} ->
                   Logger.error("""
                   Failed to process queue message
                   Reason: #{inspect(reason)}
-                  Event type: #{inspect(get_event_type(meta))}
+                  Event type: #{inspect(normalized_event_type)}
                   Exchange: #{inspect(exchange)}
                   Routing key: #{inspect(meta.routing_key)}
                   Headers: #{inspect(meta.headers)}
@@ -191,12 +188,11 @@ defmodule BeepRealTime.Queue.Consumer do
                   reject(channel, meta.delivery_tag, reason)
                   {:error, reason}
               end
-
             _ ->
               Logger.error("""
               Failed to process queue message
               Reason: #{inspect(reason)}
-              Event type: #{inspect(get_event_type(meta))}
+              Event type: #{inspect(normalized_event_type)}
               Exchange: #{inspect(exchange)}
               Routing key: #{inspect(meta.routing_key)}
               Headers: #{inspect(meta.headers)}
@@ -393,7 +389,7 @@ defmodule BeepRealTime.Queue.Consumer do
   # Handle JSON message events by converting to appropriate format
   defp handle_json_message_event(json_event, event_type, exchange) when is_map(json_event) do
     case event_type do
-      type when type in ["message.created", "messages.create"] ->
+      type when type in ["message.created", "messages.create", "message.create"] ->
         # Broadcast to channel topic
         channel_id = json_event["channel_id"]
 
@@ -410,7 +406,7 @@ defmodule BeepRealTime.Queue.Consumer do
           {:error, :missing_channel_id}
         end
 
-      type when type in ["message.updated", "messages.update"] ->
+      type when type in ["message.updated", "messages.update", "message.update"] ->
         message_id = json_event["message_id"]
 
         if message_id do
@@ -426,7 +422,7 @@ defmodule BeepRealTime.Queue.Consumer do
           {:error, :missing_message_id}
         end
 
-      type when type in ["message.deleted", "messages.delete"] ->
+      type when type in ["message.deleted", "messages.delete", "message.delete"] ->
         message_id = json_event["message_id"]
 
         if message_id do
@@ -555,4 +551,10 @@ defmodule BeepRealTime.Queue.Consumer do
   defp normalize_reason(reason) when is_binary(reason), do: reason
   defp normalize_reason(reason) when is_atom(reason), do: reason
   defp normalize_reason(reason), do: inspect(reason)
+
+  # Normalize event types to messages.*
+  defp normalize_event_type(type) when type in ["message.created", "messages.create", "message.create"], do: "messages.create"
+  defp normalize_event_type(type) when type in ["message.updated", "messages.update", "message.update"], do: "messages.update"
+  defp normalize_event_type(type) when type in ["message.deleted", "messages.delete", "message.delete"], do: "messages.delete"
+  defp normalize_event_type(type), do: type
 end
