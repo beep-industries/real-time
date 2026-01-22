@@ -20,4 +20,10 @@ defmodule BeepRealTimeWeb.TextChannel do
   def handle_in("ping", payload, socket) do
     {:reply, {:ok, payload}, socket}
   end
+
+  @impl true
+  def handle_info(%{event: event, data: data}, socket) do
+    push(socket, event, data)
+    {:noreply, socket}
+  end
 end

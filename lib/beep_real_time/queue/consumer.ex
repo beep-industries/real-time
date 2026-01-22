@@ -145,17 +145,6 @@ defmodule BeepRealTime.Queue.Consumer do
         :ok
       else
         {:error, reason} ->
-          Logger.error("""
-          Failed to process queue message
-          Reason: #{inspect(reason)}
-          Event type: #{inspect(get_event_type(meta))}
-          Exchange: #{inspect(exchange)}
-          Routing key: #{inspect(meta.routing_key)}
-          Headers: #{inspect(meta.headers)}
-          Payload preview: #{inspect(String.slice(payload, 0, 200))}
-          Queue: #{state.queue}
-          """)
-
           # Try fallback to JSON dispatch for backward compatibility
           case decode_json(payload) do
             {:ok, json_event} ->
@@ -173,16 +162,47 @@ defmodule BeepRealTime.Queue.Consumer do
                       :ok
 
                     {:error, _} ->
+                      # Only log error if all handlers failed
+                      Logger.error("""
+                      Failed to process queue message
+                      Reason: #{inspect(reason)}
+                      Event type: #{inspect(get_event_type(meta))}
+                      Exchange: #{inspect(exchange)}
+                      Routing key: #{inspect(meta.routing_key)}
+                      Headers: #{inspect(meta.headers)}
+                      Payload preview: #{inspect(String.slice(payload, 0, 200))}
+                      Queue: #{state.queue}
+                      """)
                       reject(channel, meta.delivery_tag, reason)
                       {:error, reason}
                   end
 
                 {:error, _} ->
+                  Logger.error("""
+                  Failed to process queue message
+                  Reason: #{inspect(reason)}
+                  Event type: #{inspect(get_event_type(meta))}
+                  Exchange: #{inspect(exchange)}
+                  Routing key: #{inspect(meta.routing_key)}
+                  Headers: #{inspect(meta.headers)}
+                  Payload preview: #{inspect(String.slice(payload, 0, 200))}
+                  Queue: #{state.queue}
+                  """)
                   reject(channel, meta.delivery_tag, reason)
                   {:error, reason}
               end
 
             _ ->
+              Logger.error("""
+              Failed to process queue message
+              Reason: #{inspect(reason)}
+              Event type: #{inspect(get_event_type(meta))}
+              Exchange: #{inspect(exchange)}
+              Routing key: #{inspect(meta.routing_key)}
+              Headers: #{inspect(meta.headers)}
+              Payload preview: #{inspect(String.slice(payload, 0, 200))}
+              Queue: #{state.queue}
+              """)
               reject(channel, meta.delivery_tag, reason)
               {:error, reason}
           end
