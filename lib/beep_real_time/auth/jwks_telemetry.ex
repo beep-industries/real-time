@@ -19,26 +19,26 @@ defmodule BeepRealTime.Auth.JwksTelemetry do
     )
   end
 
-  def handle_event([:joken_jwks, :default_strategy, :refetch], measurements, metadata, _config) do
+  def handle_event([:joken_jwks, :default_strategy, :refetch], _measurements, metadata, _config) do
     Logger.info("JWKS: Refetching signers for module #{inspect(metadata.module)}")
   end
 
-  def handle_event([:joken_jwks, :default_strategy, :signers], measurements, metadata, _config) do
+  def handle_event([:joken_jwks, :default_strategy, :signers], _measurements, metadata, _config) do
     signer_count = map_size(metadata.signers)
     Logger.info("JWKS: Successfully fetched #{signer_count} signer(s) for module #{inspect(metadata.module)}")
     Logger.debug("JWKS: Signer keys: #{inspect(Map.keys(metadata.signers))}")
   end
 
-  def handle_event([:joken_jwks, :http_fetcher, :start], measurements, metadata, _config) do
+  def handle_event([:joken_jwks, :http_fetcher, :start], _measurements, metadata, _config) do
     Logger.debug("JWKS: Starting HTTP fetch from #{metadata.url}")
   end
 
-  def handle_event([:joken_jwks, :http_fetcher, :stop], measurements, metadata, _config) do
+  def handle_event([:joken_jwks, :http_fetcher, :stop], measurements, _metadata, _config) do
     duration_ms = System.convert_time_unit(measurements.duration, :native, :millisecond)
     Logger.info("JWKS: HTTP fetch completed in #{duration_ms}ms")
   end
 
-  def handle_event([:joken_jwks, :http_fetcher, :exception], measurements, metadata, _config) do
+  def handle_event([:joken_jwks, :http_fetcher, :exception], _measurements, metadata, _config) do
     Logger.error("JWKS: HTTP fetch failed - #{inspect(metadata.kind)}: #{inspect(metadata.reason)}")
     Logger.error("JWKS: Stacktrace: #{inspect(metadata.stacktrace)}")
   end
