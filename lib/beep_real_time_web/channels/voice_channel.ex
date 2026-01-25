@@ -2,31 +2,38 @@ defmodule BeepRealTimeWeb.VoiceChannel do
   use Phoenix.Channel
   alias BeepRealTime.SFU.Client
   alias BeepRealTimeWeb.ChannelAuth
+  alias BeepRealTimeWeb.Presence
   require Logger
   @max_endpoint_id 9_999_999_999_999
   @stunner_auth_url "http://stunner-auth.stunner-system:8088/ice?service=turn"
 
   # A user connects to be in the call; joining triggers call-connection mechanisms.
   @impl true
-  def join("voice-channel:" <> uuid, _params, socket) do
+  def join("voice-channel:" <> uuid, params, socket) do
     # Require user to be connected to UserChannel first
     case ChannelAuth.require_user_channel(socket) do
       :ok ->
         user_id = socket.assigns[:user_id]
 
-        disconnect_existing_voice_session(user_id)
+        if params["presence_only"] do
+          # Presence-only mode: no SFU, just track presence
+          socket = assign(socket, :presence_only, true)
+          send(self(), :after_join)
+          {:ok, socket}
+        else
+          disconnect_existing_voice_session(user_id)
 
-        # Derive a shared u64 session_id from the channel key (UUIDv4)
-        session_id = uuid_to_u64(uuid)
-        Logger.info("User #{user_id} joining voice channel #{uuid} with session_id #{session_id}")
+          # Derive a shared u64 session_id from the channel key (UUIDv4)
+          session_id = uuid_to_u64(uuid)
+          Logger.info("User #{user_id} joining voice channel #{uuid} with session_id #{session_id}")
 
-        # Assign a unique u64 endpoint_id for this socket within the current channel topic
-        endpoint_id = generate_unique_endpoint_id(socket)
+          # Assign a unique u64 endpoint_id for this socket within the current channel topic
+          endpoint_id = generate_unique_endpoint_id(socket)
 
-        socket =
-          socket
-          |> assign(:session_id, session_id)
-          |> assign(:endpoint_id, endpoint_id)
+          socket =
+            socket
+            |> assign(:session_id, session_id)
+            |> assign(:endpoint_id, endpoint_id)
 
         register_voice_session(user_id, self())
 
@@ -42,14 +49,36 @@ defmodule BeepRealTimeWeb.VoiceChannel do
   end
 
   @impl true
+  def handle_info(:after_join, socket) do
+    user_id = socket.assigns[:user_id]
+    if socket.assigns[:presence_only] do
+      {:ok, _} = Presence.track(socket, user_id, %{presence_only: true})
+      push(socket, "presence_state", Presence.list(socket))
+    end
+    {:noreply, socket}
+  end
+
+  # Handle presence diffs from the server
+  @impl true
+  def handle_info(%Phoenix.Socket.Broadcast{event: "presence_diff", payload: diff}, socket) do
+    broadcast(socket, "presence_diff", diff)
+    {:noreply, socket}
+  end
+
+  @impl true
   def terminate(_reason, socket) do
     Logger.info("Terminating voice session for user #{socket.assigns.user_id}")
     user_id = socket.assigns[:user_id]
-    if user_id, do: unregister_voice_session(user_id, self())
+    if user_id do
+      Presence.untrack(socket, user_id)
+      if not socket.assigns[:presence_only] do
+        unregister_voice_session(user_id, self())
 
-    # Clean up SFU if needed
-    if socket.assigns[:session_id] && socket.assigns[:endpoint_id] do
-      Client.leave(socket.assigns.session_id, socket.assigns.endpoint_id)
+        # Clean up SFU if needed
+        if socket.assigns[:session_id] && socket.assigns[:endpoint_id] do
+          Client.leave(socket.assigns.session_id, socket.assigns.endpoint_id)
+        end
+      end
     end
 
     :ok
