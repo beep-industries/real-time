@@ -20,6 +20,13 @@ if System.get_env("PHX_SERVER") || config_env() == :prod do
   config :beep_real_time, BeepRealTimeWeb.Endpoint, server: true
 end
 
+# Keycloak configuration (read at runtime, not compile time)
+if keycloak_url = System.get_env("KEYCLOAK_URL") do
+  config :beep_real_time,
+    keycloak_url: keycloak_url,
+    keycloak_realm: System.get_env("KEYCLOAK_REALM") || "beep"
+end
+
 # OIDC Configuration - can be set in any environment
 if oidc_jwks_url = System.get_env("OIDC_JWKS_URL") do
   config :beep_real_time,

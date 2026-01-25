@@ -11,10 +11,10 @@ config :beep_real_time,
   generators: [timestamp_type: :utc_datetime]
 
 # OIDC Authentication Configuration
-# These should be overridden in runtime.exs with environment variables
+# Defaults for development - overridden in runtime.exs for production
 config :beep_real_time,
-  keycloak_url: System.get_env("KEYCLOAK_URL") || "http://localhost:8080",
-  keycloak_realm: System.get_env("KEYCLOAK_REALM") || "myrealm"
+  keycloak_url: "http://localhost:8080",
+  keycloak_realm: "myrealm"
 
 # Configures the endpoint
 config :beep_real_time, BeepRealTimeWeb.Endpoint,
