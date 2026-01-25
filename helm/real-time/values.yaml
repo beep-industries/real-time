@@ -1,0 +1,127 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/beep-industries/real-time
+  tag: "0.0.1"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 4000
+
+# Gateway API HTTPRoute configuration
+httpRoute:
+  enabled: false
+  annotations: {}
+  parentRefs:
+    - name: main-gateway
+      namespace: gateway-system
+  hostnames:
+    - real-time.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Horizontal Pod Autoscaler
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Phoenix application configuration
+config:
+  # Public hostname
+  phxHost: "localhost"
+  # Log level (debug, info, warning, error)
+  logLevel: "info"
+
+# Phoenix secret key base (required)
+# Option 1: Provide an existing secret name (recommended for production)
+secretKeyBase:
+  existingSecret: ""
+  secretKey: "secret_key_base"
+  # Option 2: Provide the value directly (required if existingSecret is not set)
+  # value: "your-64-char-secret-key-base"
+
+# Keycloak/OIDC configuration
+keycloak:
+  url: "http://keycloak:8080"
+  realm: "myrealm"
+
+# Redis configuration (for deduplication)
+redis:
+  url: "redis://localhost:6379/0"
+  # Option 1: Provide an existing secret name
+  existingSecret: ""
+  secretKey: "url"
+
+# RabbitMQ configuration (for event consumption)
+rabbitmq:
+  url: "amqp://guest:guest@localhost:5672"
+  # Option 1: Provide an existing secret name
+  existingSecret: ""
+  # For RabbitMQ operator secrets with individual fields
+  usernameKey: "username"
+  passwordKey: "password"
+  hostKey: "host"
+  portKey: "port"
+
+# SFU gRPC configuration (for voice signaling)
+sfu:
+  grpcAddr: "127.0.0.1:50051"
+
+# Health check configuration
+healthCheck:
+  enabled: true
+  livenessProbe:
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3

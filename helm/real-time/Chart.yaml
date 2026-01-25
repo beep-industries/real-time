@@ -1,0 +1,16 @@
+apiVersion: v2
+name: real-time
+description: Real-time signaling service for WebSocket message delivery (Phoenix/Elixir)
+type: application
+version: 0.1.0
+appVersion: "0.0.1"
+keywords:
+  - real-time
+  - signaling
+  - websocket
+  - microservice
+  - elixir
+  - phoenix
+maintainers:
+  - name: beep
+    email: contact@beep.ovh
