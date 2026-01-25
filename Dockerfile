@@ -7,7 +7,9 @@ FROM elixir:1.19.2 AS builder
 WORKDIR /app
 
 # Set build ENV
-ENV MIX_ENV=prod
+# ERL_FLAGS is needed for cross-platform builds (arm64 -> amd64) to avoid TTY driver issues
+ENV MIX_ENV=prod \
+    ERL_FLAGS="+JMsingle true"
 
 # Install Hex and Rebar
 RUN mix local.hex --force && \
