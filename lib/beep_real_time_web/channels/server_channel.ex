@@ -36,4 +36,11 @@ defmodule BeepRealTimeWeb.ServerChannel do
   def handle_in("ping", payload, socket) do
     {:reply, {:ok, payload}, socket}
   end
+
+  @impl true
+  def terminate(_reason, socket) do
+    user_id = socket.assigns[:user_id]
+    Presence.untrack(socket, user_id)
+    :ok
+  end
 end
