@@ -6,4 +6,5 @@ defmodule Messages.Events.UpdateMessageEvent do
   field(:content, 2, type: :string)
   field(:is_pinned, 3, type: :bool, proto3_optional: true)
   field(:notify_entries, 4, repeated: true, type: Messages.Events.NotifyEntry)
+  field(:channel_id, 5, type: :string)
 end
