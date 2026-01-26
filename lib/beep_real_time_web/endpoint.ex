@@ -13,7 +13,7 @@ defmodule BeepRealTimeWeb.Endpoint do
 
   # Primary WebSocket for real-time signaling
   socket "/socket", BeepRealTimeWeb.UserSocket,
-    websocket: [timeout: 60_000],
+    websocket: [timeout: 60_000, check_origin: false],
     longpoll: false
 
   # Serve at "/" the static files from "priv/static" directory.
