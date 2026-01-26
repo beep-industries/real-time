@@ -4,6 +4,7 @@ defmodule BeepRealTimeWeb.VoiceChannel do
   alias BeepRealTimeWeb.ChannelAuth
   require Logger
   @max_endpoint_id 9_999_999_999_999
+  @stunner_auth_url "http://stunner-auth.stunner-system:8088/ice?service=turn"
 
   # A user connects to be in the call; joining triggers call-connection mechanisms.
   @impl true
@@ -28,8 +29,12 @@ defmodule BeepRealTimeWeb.VoiceChannel do
           |> assign(:endpoint_id, endpoint_id)
 
         register_voice_session(user_id, self())
-        # Return the assigned ids so the client can use them as needed
-        {:ok, %{session_id: session_id, endpoint_id: endpoint_id, user_id: user_id}, socket}
+
+        # Fetch ICE/TURN configuration from STUNner auth service
+        rtc_configuration = fetch_rtc_configuration()
+
+        # Return the assigned ids and RTC configuration so the client can use them
+        {:ok, %{session_id: session_id, endpoint_id: endpoint_id, user_id: user_id, rtc_configuration: rtc_configuration}, socket}
 
       {:error, reason} ->
         {:error, reason}
@@ -206,5 +211,29 @@ defmodule BeepRealTimeWeb.VoiceChannel do
   defp random_endpoint_id do
     <<int::unsigned-64>> = :crypto.strong_rand_bytes(8)
     rem(int, @max_endpoint_id + 1)
+  end
+
+  defp fetch_rtc_configuration do
+    request = Finch.build(:get, @stunner_auth_url)
+
+    case Finch.request(request, BeepRealTime.Finch, receive_timeout: 5_000) do
+      {:ok, %Finch.Response{status: 200, body: body}} ->
+        case Jason.decode(body) do
+          {:ok, rtc_config} ->
+            rtc_config
+
+          {:error, reason} ->
+            Logger.warning("Failed to parse RTC configuration response: #{inspect(reason)}")
+            %{}
+        end
+
+      {:ok, %Finch.Response{status: status}} ->
+        Logger.warning("RTC configuration request returned status #{status}")
+        %{}
+
+      {:error, reason} ->
+        Logger.warning("Failed to fetch RTC configuration: #{inspect(reason)}")
+        %{}
+    end
   end
 end
