@@ -63,7 +63,7 @@ defmodule BeepRealTime.Events.MessageHandler do
   end
 
   def handle(%UpdateMessageEvent{} = event, exchange) do
-    message_topic = "message:#{event.message_id}"
+    message_topic = "text-channel:#{event.channel_id}"
 
     payload = %{
       event: "message.updated",
@@ -89,7 +89,7 @@ defmodule BeepRealTime.Events.MessageHandler do
   end
 
   def handle(%DeleteMessageEvent{} = event, exchange) do
-    message_topic = "message:#{event.message_id}"
+    message_topic = "text-channel:#{event.channel_id}"
 
     payload = %{
       event: "message.deleted",
