@@ -52,8 +52,8 @@ defmodule BeepRealTimeWeb.VoiceChannel do
   def handle_info(:after_join, socket) do
     user_id = socket.assigns[:user_id]
     if socket.assigns[:presence_only] do
-      {:ok, _} = Presence.track(socket, user_id, %{presence_only: true})
-      push(socket, "presence_state", Presence.list(socket))
+      {:ok, _} = BeepRealTimeWeb.Presence.track(socket, user_id, %{presence_only: true})
+      push(socket, "presence_state", BeepRealTimeWeb.Presence.list(socket))
     end
     {:noreply, socket}
   end
@@ -70,7 +70,7 @@ defmodule BeepRealTimeWeb.VoiceChannel do
     Logger.info("Terminating voice session for user #{socket.assigns.user_id}")
     user_id = socket.assigns[:user_id]
     if user_id do
-      Presence.untrack(socket, user_id)
+      BeepRealTimeWeb.Presence.untrack(socket, user_id)
       if not socket.assigns[:presence_only] do
         unregister_voice_session(user_id, self())
 
