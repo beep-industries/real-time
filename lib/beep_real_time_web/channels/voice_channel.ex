@@ -70,7 +70,7 @@ defmodule BeepRealTimeWeb.VoiceChannel do
     user_id = socket.assigns[:user_id]
     if user_id do
       BeepRealTimeWeb.Presence.untrack(socket, user_id)
-      if not socket.assigns[:presence_only] do
+      unless socket.assigns[:presence_only] do
         unregister_voice_session(user_id, self())
 
         # Clean up SFU if needed
@@ -111,21 +111,20 @@ defmodule BeepRealTimeWeb.VoiceChannel do
   end
 
   @impl true
-  def handle_info(:gun_down, socket) do
-    Logger.warning("SFU connection lost for user #{socket.assigns.user_id}")
-    push(socket, "sfu_connection_lost", %{message: "Connection to SFU lost"})
-    {:noreply, socket}
-  end
-
-  @impl true
   def handle_in("ping", payload, socket) do
     {:reply, {:ok, payload}, socket}
   end
 
   @impl true
-  def handle_in("offer", %{"offer_sdp" => offer} = _payload, socket) do
+  def handle_in("offer", %{"offer_sdp" => offer} = payload, socket) do
     endpoint_id = socket.assigns.endpoint_id
     session_id = socket.assigns.session_id
+
+    # Extract transcription options from payload
+    transcription_opts = %{
+      enable_transcription: Map.get(payload, "transcription_enabled", false),
+      transcription_language: Map.get(payload, "transcription_language", "")
+    }
 
     # Track presence for this endpoint (id) on first offer
     {:ok, _ref} =
@@ -137,7 +136,7 @@ defmodule BeepRealTimeWeb.VoiceChannel do
     push(socket, "presence_state", BeepRealTimeWeb.Presence.list(socket))
     with true <- is_binary(offer) do
       :telemetry.execute([:beep_real_time, :voice, :offer, :request], %{count: 1}, %{session_id: session_id, endpoint_id: endpoint_id})
-      case Client.offer(session_id, endpoint_id, offer) do
+      case Client.offer(session_id, endpoint_id, offer, transcription_opts) do
         {:ok, answer_sdp} ->
           :telemetry.execute([:beep_real_time, :voice, :offer, :ok], %{count: 1}, %{session_id: session_id, endpoint_id: endpoint_id})
           {:reply, {:ok, %{answer_sdp: answer_sdp}}, socket}
@@ -181,6 +180,159 @@ defmodule BeepRealTimeWeb.VoiceChannel do
       )
     push(socket, "presence_state", BeepRealTimeWeb.Presence.list(socket))
     {:noreply, socket}
+  end
+
+  @impl true
+  def handle_in("subscribe_transcription", _payload, socket) do
+    session_id = socket.assigns.session_id
+    Logger.info("User #{socket.assigns.user_id} subscribing to transcription for session #{session_id}")
+
+    if socket.assigns[:transcription_subscribed] do
+      {:reply, {:ok, %{status: "already_subscribed"}}, socket}
+    else
+      :telemetry.execute([:beep_real_time, :voice, :transcription, :subscribe], %{count: 1}, %{session_id: session_id})
+
+      case Client.subscribe_transcription(session_id) do
+        {:ok, stream} ->
+          # Start a process to consume the stream and forward updates to the socket
+          self_pid = self()
+          Task.start(fn ->
+            stream
+            |> Enum.each(fn update ->
+              send(self_pid, {:transcription_update, update})
+            end)
+          end)
+
+          socket = assign(socket, :transcription_subscribed, true)
+          {:reply, {:ok, %{status: "subscribed"}}, socket}
+
+        {:error, reason} ->
+          :telemetry.execute([:beep_real_time, :voice, :transcription, :error], %{count: 1}, %{session_id: session_id, reason: reason})
+          {:reply, {:error, %{error: reason}}, socket}
+      end
+    end
+  end
+
+  @impl true
+  def handle_in("enable_transcription", payload, socket) do
+    session_id = socket.assigns.session_id
+    endpoint_id = socket.assigns.endpoint_id
+    language = Map.get(payload, "language", "auto")
+
+    Logger.info("User #{socket.assigns.user_id} enabling transcription for session #{session_id}, endpoint #{endpoint_id}, language: #{language}")
+    :telemetry.execute([:beep_real_time, :voice, :transcription, :enable], %{count: 1}, %{session_id: session_id, endpoint_id: endpoint_id, language: language})
+
+    case Client.enable_transcription(session_id, endpoint_id, language) do
+      :ok ->
+        :telemetry.execute([:beep_real_time, :voice, :transcription, :enable, :ok], %{count: 1}, %{session_id: session_id, endpoint_id: endpoint_id})
+        {:reply, {:ok, %{status: "enabled"}}, socket}
+
+      {:error, reason} ->
+        :telemetry.execute([:beep_real_time, :voice, :transcription, :enable, :error], %{count: 1}, %{session_id: session_id, endpoint_id: endpoint_id, reason: reason})
+        {:reply, {:error, %{error: reason}}, socket}
+    end
+  end
+
+  @impl true
+  def handle_in("disable_transcription", _payload, socket) do
+    session_id = socket.assigns.session_id
+    endpoint_id = socket.assigns.endpoint_id
+
+    Logger.info("User #{socket.assigns.user_id} disabling transcription for session #{session_id}, endpoint #{endpoint_id}")
+    :telemetry.execute([:beep_real_time, :voice, :transcription, :disable], %{count: 1}, %{session_id: session_id, endpoint_id: endpoint_id})
+
+    case Client.disable_transcription(session_id, endpoint_id) do
+      :ok ->
+        :telemetry.execute([:beep_real_time, :voice, :transcription, :disable, :ok], %{count: 1}, %{session_id: session_id, endpoint_id: endpoint_id})
+        {:reply, {:ok, %{status: "disabled"}}, socket}
+
+      {:error, reason} ->
+        :telemetry.execute([:beep_real_time, :voice, :transcription, :disable, :error], %{count: 1}, %{session_id: session_id, endpoint_id: endpoint_id, reason: reason})
+        {:reply, {:error, %{error: reason}}, socket}
+    end
+  end
+
+  @impl true
+  def handle_info({:transcription_update, update}, socket) do
+    Logger.debug("Received transcription update for session #{update.session_id}, endpoint #{update.endpoint_id}: #{update.text}")
+    push(socket, "transcription_update", %{
+      endpoint_id: update.endpoint_id,
+      text: update.text,
+      start_ms: update.start_ms,
+      end_ms: update.end_ms
+    })
+    {:noreply, socket}
+  end
+
+  # Handle raw gRPC stream data from Gun (used by the transcription stream)
+  @impl true
+  def handle_info({:gun_data, _conn_pid, _stream_ref, _fin_or_nofin, data}, socket) do
+    # The data is a length-prefixed protobuf message
+    # gRPC uses a 5-byte header: 1 byte compression flag + 4 bytes message length
+    case decode_grpc_frame(data) do
+      {:ok, update} ->
+        Logger.debug("Received transcription update for endpoint #{update.endpoint_id}: #{update.text}")
+        push(socket, "transcription_update", %{
+          endpoint_id: update.endpoint_id,
+          text: update.text,
+          start_ms: update.start_ms,
+          end_ms: update.end_ms
+        })
+      {:error, reason} ->
+        Logger.warning("Failed to decode transcription update: #{inspect(reason)}")
+    end
+    {:noreply, socket}
+  end
+
+  # Handle Gun connection events
+  @impl true
+  def handle_info({:gun_up, _conn_pid, _protocol}, socket) do
+    Logger.debug("Gun connection up for transcription stream")
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:gun_down, _conn_pid, _protocol, _reason, _killed_streams}, socket) do
+    Logger.warning("Gun connection down for transcription stream")
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:gun_error, _conn_pid, _stream_ref, reason}, socket) do
+    Logger.warning("Gun error for transcription stream: #{inspect(reason)}")
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:gun_error, _conn_pid, reason}, socket) do
+    Logger.warning("Gun connection error: #{inspect(reason)}")
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:gun_response, _conn_pid, _stream_ref, _fin, _status, _headers}, socket) do
+    Logger.debug("Gun response received for transcription stream")
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:gun_trailers, _conn_pid, _stream_ref, _trailers}, socket) do
+    Logger.debug("Gun trailers received for transcription stream")
+    {:noreply, socket}
+  end
+
+  # Decode gRPC length-prefixed frame to TranscriptionUpdate
+  defp decode_grpc_frame(<<_compressed::8, length::32, message::binary-size(length), _rest::binary>>) do
+    try do
+      update = Signaling.TranscriptionUpdate.decode(message)
+      {:ok, update}
+    rescue
+      e -> {:error, e}
+    end
+  end
+
+  defp decode_grpc_frame(data) do
+    {:error, {:invalid_frame, byte_size(data)}}
   end
 
   defp parse_int(v) when is_integer(v), do: {v, ""}
