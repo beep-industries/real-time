@@ -7,23 +7,41 @@ defmodule BeepRealTime.SFU.Client do
 
     - rpc Offer(OfferRequest) returns (OfferResponse)
     - rpc Leave(LeaveRequest) returns (LeaveResponse)
+    - rpc SubscribeTranscription(TranscriptionSubscription) returns (stream TranscriptionUpdate)
 
   Configure target via env SFU_GRPC_ADDR (default: 127.0.0.1:50051).
   """
 
-  alias Signaling.{OfferRequest, LeaveRequest}
+  alias Signaling.{
+    OfferRequest,
+    LeaveRequest,
+    TranscriptionSubscription,
+    EnableTranscriptionRequest,
+    DisableTranscriptionRequest
+  }
   alias Signaling.Signaling.Stub, as: SignalingStub
   require Logger
 
   @type session_id :: non_neg_integer()
   @type endpoint_id :: non_neg_integer()
+  @type transcription_opts :: %{
+          optional(:enable_transcription) => boolean(),
+          optional(:transcription_language) => String.t()
+        }
 
-  @spec offer(session_id, endpoint_id, String.t()) :: {:ok, String.t()} | {:error, String.t()}
-  def offer(session_id, endpoint_id, offer_sdp)
+  @spec offer(session_id, endpoint_id, String.t(), transcription_opts()) ::
+          {:ok, String.t()} | {:error, String.t()}
+  def offer(session_id, endpoint_id, offer_sdp, opts \\ %{})
       when is_integer(session_id) and is_integer(endpoint_id) and is_binary(offer_sdp) do
     with {:ok, channel} <- connect(),
          norm_offer <- normalize_offer_sdp(offer_sdp),
-         req <- %OfferRequest{session_id: session_id, endpoint_id: endpoint_id, offer_sdp: norm_offer},
+         req <- %OfferRequest{
+           session_id: session_id,
+           endpoint_id: endpoint_id,
+           offer_sdp: norm_offer,
+           enable_transcription: Map.get(opts, :enable_transcription, true),
+           transcription_language: Map.get(opts, :transcription_language, "")
+         },
          {:ok, resp} <- SignalingStub.offer(channel, req, timeout: 15_000) do
       case resp do
         %{error: error} when is_binary(error) and error != "" -> {:error, error}
@@ -42,6 +60,108 @@ defmodule BeepRealTime.SFU.Client do
     with {:ok, channel} <- connect(),
          req <- %LeaveRequest{session_id: session_id, endpoint_id: endpoint_id},
          {:ok, resp} <- SignalingStub.leave(channel, req, timeout: 10_000) do
+      case resp do
+        %{ok: true} -> :ok
+        %{ok: false, error: error} when is_binary(error) and error != "" -> {:error, error}
+        _ -> {:error, "invalid_response"}
+      end
+    else
+      {:error, :econnrefused} -> {:error, "sfu_unreachable"}
+      {:error, %GRPC.RPCError{status: _s, message: m}} -> {:error, format_grpc_error(m)}
+      {:error, other} -> {:error, format_grpc_error(other)}
+    end
+  end
+
+  @doc """
+  Subscribe to transcription updates for a session.
+
+  Returns a stream that yields `Signaling.TranscriptionUpdate` messages.
+  The caller is responsible for consuming the stream and handling errors.
+
+  ## Options
+
+    * `:callback` - A function that will be called for each transcription update.
+      The function receives a `Signaling.TranscriptionUpdate` struct.
+
+  ## Example
+
+      {:ok, stream} = Client.subscribe_transcription(session_id)
+      Enum.each(stream, fn update ->
+        IO.puts("Transcription: \#{update.text}")
+      end)
+
+  """
+  @spec subscribe_transcription(session_id) :: {:ok, Enumerable.t()} | {:error, String.t()}
+  def subscribe_transcription(session_id) when is_integer(session_id) do
+    with {:ok, channel} <- connect(),
+         req <- %TranscriptionSubscription{session_id: session_id},
+         {:ok, stream} <- SignalingStub.subscribe_transcription(channel, req) do
+      {:ok, stream}
+    else
+      {:error, :econnrefused} -> {:error, "sfu_unreachable"}
+      {:error, %GRPC.RPCError{status: _s, message: m}} -> {:error, format_grpc_error(m)}
+      {:error, other} -> {:error, format_grpc_error(other)}
+    end
+  end
+
+  @doc """
+  Enable transcription for a specific endpoint in a session.
+
+  ## Parameters
+
+    * `session_id` - The session ID
+    * `endpoint_id` - The endpoint ID
+    * `language` - Language code (e.g., "en", "es", "auto" for auto-detect)
+
+  ## Example
+
+      Client.enable_transcription(session_id, endpoint_id, "en")
+
+  """
+  @spec enable_transcription(session_id, endpoint_id, String.t()) :: :ok | {:error, String.t()}
+  def enable_transcription(session_id, endpoint_id, language \\ "auto")
+      when is_integer(session_id) and is_integer(endpoint_id) and is_binary(language) do
+    with {:ok, channel} <- connect(),
+         req <- %EnableTranscriptionRequest{
+           session_id: session_id,
+           endpoint_id: endpoint_id,
+           language: language
+         },
+         {:ok, resp} <- SignalingStub.enable_transcription(channel, req, timeout: 10_000) do
+      case resp do
+        %{ok: true} -> :ok
+        %{ok: false, error: error} when is_binary(error) and error != "" -> {:error, error}
+        _ -> {:error, "invalid_response"}
+      end
+    else
+      {:error, :econnrefused} -> {:error, "sfu_unreachable"}
+      {:error, %GRPC.RPCError{status: _s, message: m}} -> {:error, format_grpc_error(m)}
+      {:error, other} -> {:error, format_grpc_error(other)}
+    end
+  end
+
+  @doc """
+  Disable transcription for a specific endpoint in a session.
+
+  ## Parameters
+
+    * `session_id` - The session ID
+    * `endpoint_id` - The endpoint ID
+
+  ## Example
+
+      Client.disable_transcription(session_id, endpoint_id)
+
+  """
+  @spec disable_transcription(session_id, endpoint_id) :: :ok | {:error, String.t()}
+  def disable_transcription(session_id, endpoint_id)
+      when is_integer(session_id) and is_integer(endpoint_id) do
+    with {:ok, channel} <- connect(),
+         req <- %DisableTranscriptionRequest{
+           session_id: session_id,
+           endpoint_id: endpoint_id
+         },
+         {:ok, resp} <- SignalingStub.disable_transcription(channel, req, timeout: 10_000) do
       case resp do
         %{ok: true} -> :ok
         %{ok: false, error: error} when is_binary(error) and error != "" -> {:error, error}

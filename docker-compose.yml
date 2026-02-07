@@ -20,7 +20,7 @@ services:
       # SFU gRPC address (set to where your SFU gRPC server is listening)
       # If the SFU runs on the HOST, containers cannot reach it via 127.0.0.1.
       # On macOS/Windows Docker Desktop you can use host.docker.internal; on Linux consider the host-gateway feature.
-      - SFU_GRPC_ADDR=127.0.0.1:50051
+      - SFU_GRPC_ADDR=127.0.0.1:50052
     network_mode: "host"
 #    depends_on:
 #      - redis
