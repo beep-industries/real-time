@@ -60,6 +60,11 @@ defmodule Signaling.EnableTranscriptionRequest do
   field :session_id, 1, type: :uint64, json_name: "session_id"
   field :endpoint_id, 2, type: :uint64, json_name: "endpoint_id"
   field :language, 3, type: :string
+  field :backend, 4, type: :string
+  field :simul_streaming_addr, 5, type: :string, json_name: "simul_streaming_addr"
+  field :openai_api_key, 6, type: :string, json_name: "openai_api_key"
+  field :openai_base_url, 7, type: :string, json_name: "openai_base_url"
+  field :openai_model, 8, type: :string, json_name: "openai_model"
 end
 
 defmodule Signaling.EnableTranscriptionResponse do
