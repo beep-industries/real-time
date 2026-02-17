@@ -2,7 +2,6 @@ defmodule BeepRealTimeWeb.VoiceChannel do
   use Phoenix.Channel
   alias BeepRealTime.SFU.Client
   alias BeepRealTimeWeb.ChannelAuth
-  alias BeepRealTimeWeb.Presence
   require Logger
   @max_endpoint_id 9_999_999_999_999
   @stunner_auth_url "http://stunner-auth.stunner-system:8088/ice?service=turn"
@@ -192,24 +191,24 @@ defmodule BeepRealTimeWeb.VoiceChannel do
     else
       :telemetry.execute([:beep_real_time, :voice, :transcription, :subscribe], %{count: 1}, %{session_id: session_id})
 
-      case Client.subscribe_transcription(session_id) do
-        {:ok, stream} ->
-          # Start a process to consume the stream and forward updates to the socket
-          self_pid = self()
-          Task.start(fn ->
+      # Start a process to consume the stream and forward updates to the socket
+      self_pid = self()
+      Task.start(fn ->
+        case Client.subscribe_transcription(session_id) do
+          {:ok, stream} ->
             stream
-            |> Enum.each(fn update ->
-              send(self_pid, {:transcription_update, update})
+            |> Enum.each(fn
+              {:ok, update} -> send(self_pid, {:transcription_update, update})
+              {:error, reason} -> Logger.warning("Transcription stream error: #{inspect(reason)}")
             end)
-          end)
+          {:error, reason} ->
+            Logger.error("Failed to subscribe transcription in background task: #{inspect(reason)}")
+            :telemetry.execute([:beep_real_time, :voice, :transcription, :error], %{count: 1}, %{session_id: session_id, reason: reason})
+        end
+      end)
 
-          socket = assign(socket, :transcription_subscribed, true)
-          {:reply, {:ok, %{status: "subscribed"}}, socket}
-
-        {:error, reason} ->
-          :telemetry.execute([:beep_real_time, :voice, :transcription, :error], %{count: 1}, %{session_id: session_id, reason: reason})
-          {:reply, {:error, %{error: reason}}, socket}
-      end
+      socket = assign(socket, :transcription_subscribed, true)
+      {:reply, {:ok, %{status: "subscribed"}}, socket}
     end
   end
 
@@ -219,10 +218,20 @@ defmodule BeepRealTimeWeb.VoiceChannel do
     endpoint_id = socket.assigns.endpoint_id
     language = Map.get(payload, "language", "auto")
 
+    opts =
+      [
+                backend: Map.get(payload, "backend"),
+                simul_streaming_addr: Map.get(payload, "simul_streaming_addr"),
+                openai_api_key: Map.get(payload, "openai_api_key"),
+                openai_base_url: Map.get(payload, "openai_base_url"),
+                openai_model: Map.get(payload, "openai_model")
+      ]
+      |> Enum.reject(fn {_, v} -> is_nil(v) end)
+
     Logger.info("User #{socket.assigns.user_id} enabling transcription for session #{session_id}, endpoint #{endpoint_id}, language: #{language}")
     :telemetry.execute([:beep_real_time, :voice, :transcription, :enable], %{count: 1}, %{session_id: session_id, endpoint_id: endpoint_id, language: language})
 
-    case Client.enable_transcription(session_id, endpoint_id, language) do
+    case Client.enable_transcription(session_id, endpoint_id, language, opts) do
       :ok ->
         :telemetry.execute([:beep_real_time, :voice, :transcription, :enable, :ok], %{count: 1}, %{session_id: session_id, endpoint_id: endpoint_id})
         {:reply, {:ok, %{status: "enabled"}}, socket}

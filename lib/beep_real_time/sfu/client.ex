@@ -112,20 +112,31 @@ defmodule BeepRealTime.SFU.Client do
     * `session_id` - The session ID
     * `endpoint_id` - The endpoint ID
     * `language` - Language code (e.g., "en", "es", "auto" for auto-detect)
+    * `opts` - Additional options for backend configuration
+      * `:backend` - "simul-streaming" or "openai"
+      * `:simul_streaming_addr` - Address of SimulStreaming server
+      * `:openai_api_key` - OpenAI API Key
+      * `:openai_base_url` - OpenAI Base URL
+      * `:openai_model` - OpenAI Model
 
   ## Example
 
-      Client.enable_transcription(session_id, endpoint_id, "en")
+      Client.enable_transcription(session_id, endpoint_id, "en", backend: "openai", openai_api_key: "...")
 
   """
-  @spec enable_transcription(session_id, endpoint_id, String.t()) :: :ok | {:error, String.t()}
-  def enable_transcription(session_id, endpoint_id, language \\ "auto")
-      when is_integer(session_id) and is_integer(endpoint_id) and is_binary(language) do
+  @spec enable_transcription(session_id, endpoint_id, String.t(), Keyword.t()) :: :ok | {:error, String.t()}
+  def enable_transcription(session_id, endpoint_id, language \\ "auto", opts \\ [])
+      when is_integer(session_id) and is_integer(endpoint_id) and is_binary(language) and is_list(opts) do
     with {:ok, channel} <- connect(),
          req <- %EnableTranscriptionRequest{
            session_id: session_id,
            endpoint_id: endpoint_id,
-           language: language
+           language: language,
+           backend: Keyword.get(opts, :backend, ""),
+           simul_streaming_addr: Keyword.get(opts, :simul_streaming_addr, ""),
+           openai_api_key: Keyword.get(opts, :openai_api_key, ""),
+           openai_base_url: Keyword.get(opts, :openai_base_url, ""),
+           openai_model: Keyword.get(opts, :openai_model, "")
          },
          {:ok, resp} <- SignalingStub.enable_transcription(channel, req, timeout: 10_000) do
       case resp do
